@@ -74,7 +74,41 @@ grep -rln "const formatPrice" apps/ packages/
 - 모듈 자체 포함 구조 (components, hooks, api, types, utils)
 - index.ts public API 정의
 
-### 4. 의존성 방향
+### 4. 앱 독립성 원칙 (중요)
+
+> **CRITICAL**: 각 앱은 **권한/역할별로 서버가 완전히 분리 배포**될 수 있습니다.
+
+```
+apps/user       → user.example.com      (일반 사용자)
+apps/admin      → admin.example.com     (관리자)
+apps/manager    → manager.example.com   (중간 관리자, 향후)
+```
+
+**검사 원칙:**
+- 앱 간 직접 import 검출 시 → **[CRITICAL]** 에러
+- 앱별 동일 코드 → **허용** (중복 경고 제외)
+- 공유 가능한 순수 타입/함수 중복 → **[WARNING]** 권장
+
+**공유 대상 vs 앱 독립 유지:**
+
+| 구분 | 공유 (`@auction/shared`) | 앱별 독립 유지 |
+|------|-------------------------|---------------|
+| 타입 | 백엔드 스키마 기반 (Product, User) | 앱 전용 확장 (UserProfile) |
+| 유틸 | 순수 함수 (formatPrice) | 상태 관리, 앱별 로직 |
+| 인증 | 팩토리 함수, 인터페이스 | 앱별 설정, 엔드포인트 |
+
+```typescript
+// ✅ 허용: 앱별 독립 (역할별 서버 분리 가능성)
+// apps/user/src/lib/security.ts
+// apps/admin/src/lib/security.ts
+
+// ❌ 중복 금지: 백엔드 스키마 기반 순수 타입
+// apps/user/src/types/product.ts  - interface Product
+// apps/admin/src/types/product.ts - interface Product
+// → @auction/shared/types로 통합 필요
+```
+
+### 5. 의존성 방향
 
 ```
 @*/shared (최하위) ← @*/ui ← src/lib ← features/* ← app/* (최상위)
