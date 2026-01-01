@@ -258,6 +258,213 @@ if (response.status === 404) { }  // 프로덕션에서는 항상 200
 | 404 | `NOT_FOUND` | 요청한 정보를 찾을 수 없습니다 |
 | 500 | `INTERNAL_ERROR` | 요청을 처리할 수 없습니다 |
 
+## 데이터베이스 테이블 설계 규칙 (필수)
+
+> **CRITICAL**: 모든 데이터베이스 테이블은 아래 필수 컬럼을 반드시 포함해야 합니다.
+
+### 필수 컬럼 (모든 테이블)
+
+| 컬럼명 | 타입 | 설명 | 기본값 |
+|--------|------|------|--------|
+| `id` | UUID / BIGINT | Primary Key | auto-generated |
+| `created_at` | TIMESTAMP | 생성일시 | `NOW()` / `CURRENT_TIMESTAMP` |
+| `created_by` | UUID / VARCHAR | 생성자 ID | NULL (시스템 생성 허용) |
+| `updated_at` | TIMESTAMP | 수정일시 | `NOW()` / `CURRENT_TIMESTAMP` |
+| `updated_by` | UUID / VARCHAR | 수정자 ID | NULL |
+| `is_active` | BOOLEAN | 사용 여부 | `TRUE` |
+| `is_deleted` | BOOLEAN | 삭제 여부 (Soft Delete) | `FALSE` |
+
+### 데이터베이스별 날짜 함수
+
+| 데이터베이스 | 현재 시간 함수 | 사용 예시 |
+|-------------|---------------|----------|
+| PostgreSQL | `NOW()` / `CURRENT_TIMESTAMP` | `DEFAULT NOW()` |
+| MySQL | `NOW()` / `CURRENT_TIMESTAMP` | `DEFAULT CURRENT_TIMESTAMP` |
+| Oracle | `SYSDATE` / `SYSTIMESTAMP` | `DEFAULT SYSDATE` |
+| SQLite | `CURRENT_TIMESTAMP` | `DEFAULT CURRENT_TIMESTAMP` |
+| SQL Server | `GETDATE()` / `SYSDATETIME()` | `DEFAULT GETDATE()` |
+
+### SQLAlchemy 모델 예시 (Python)
+
+```python
+from datetime import datetime
+from typing import Optional
+import uuid
+
+from sqlalchemy import Boolean, ForeignKey, String
+from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.sql import func
+
+class TimestampMixin:
+    """모든 모델에 필수로 포함되는 Mixin."""
+
+    created_at: Mapped[datetime] = mapped_column(
+        default=func.now(),
+        nullable=False,
+    )
+    created_by: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True),
+        nullable=True,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+    updated_by: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True),
+        nullable=True,
+    )
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    is_deleted: Mapped[bool] = mapped_column(Boolean, default=False)
+
+
+class User(Base, TimestampMixin):
+    """사용자 모델 - TimestampMixin 상속 필수."""
+
+    __tablename__ = "users"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        primary_key=True,
+        default=uuid.uuid4,
+    )
+    # ... 기타 필드
+```
+
+### Prisma 스키마 예시 (TypeScript)
+
+```prisma
+model User {
+  id         String   @id @default(uuid())
+
+  // ... 기타 필드
+
+  // 필수 컬럼
+  createdAt  DateTime @default(now()) @map("created_at")
+  createdBy  String?  @map("created_by")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+  updatedBy  String?  @map("updated_by")
+  isActive   Boolean  @default(true) @map("is_active")
+  isDeleted  Boolean  @default(false) @map("is_deleted")
+
+  @@map("users")
+}
+```
+
+### 프론트엔드 타입 예시 (TypeScript)
+
+```typescript
+// 모든 엔티티가 상속해야 하는 기본 타입
+interface BaseEntity {
+  id: string;
+  createdAt: string;  // ISO 8601 형식
+  createdBy?: string;
+  updatedAt: string;
+  updatedBy?: string;
+  isActive: boolean;
+  isDeleted: boolean;
+}
+
+interface User extends BaseEntity {
+  name: string;
+  email: string;
+  // ... 기타 필드
+}
+```
+
+### 쿼리 시 주의사항
+
+```python
+# ✅ 올바른 예: 삭제되지 않은 활성 데이터만 조회
+query = select(User).where(
+    User.is_deleted == False,
+    User.is_active == True,
+)
+
+# ❌ 잘못된 예: 삭제/비활성 필터 없음
+query = select(User)  # Soft Delete된 데이터도 조회됨
+```
+
+### 체크리스트
+
+- [ ] 모든 테이블에 `created_at`, `updated_at` 포함
+- [ ] 모든 테이블에 `created_by`, `updated_by` 포함
+- [ ] 모든 테이블에 `is_active`, `is_deleted` 포함
+- [ ] 날짜 기본값에 DB에 맞는 함수 사용 (`NOW()`, `SYSDATE` 등)
+- [ ] `updated_at`에 자동 업데이트 트리거/옵션 설정
+- [ ] 조회 쿼리에 `is_deleted = FALSE` 필터 적용
+- [ ] 백엔드 모델과 프론트엔드 타입 동기화
+
+---
+
+## 프론트엔드 UX 규칙 (필수)
+
+> **CRITICAL**: 사용자 경험을 위해 모든 폼과 다단계 프로세스에서 아래 규칙을 준수합니다.
+
+### 네비게이션 필수 요소
+
+| 상황 | 필수 요소 | 설명 |
+|------|----------|------|
+| 다단계 폼/프로세스 | "이전으로" 버튼 | 이전 단계로 돌아가기 |
+| 가입/신청 프로세스 | "취소" 링크 | 프로세스 중단 및 이탈 |
+| 모달/팝업 | 닫기 버튼 (X) | 모달 닫기 |
+| 상세 페이지 | "목록으로" 버튼 | 목록 페이지로 복귀 |
+
+### 다단계 폼 필수 패턴
+
+```tsx
+// ✅ 올바른 예: 모든 단계에 이전/취소 버튼 포함
+const renderStep = () => (
+  <Box>
+    {/* 메인 콘텐츠 */}
+
+    {/* 다음 단계 버튼 */}
+    <Button variant="contained" onClick={handleNext}>
+      다음
+    </Button>
+
+    {/* 이전 단계 버튼 (첫 단계 제외) */}
+    {step !== 'first' && (
+      <Button variant="text" onClick={handlePrevious}>
+        이전으로
+      </Button>
+    )}
+  </Box>
+);
+
+// 페이지 하단에 취소 링크
+{step !== 'first' && (
+  <Typography onClick={() => router.push('/')}>
+    취소
+  </Typography>
+)}
+```
+
+### 체크리스트
+
+- [ ] 다단계 폼의 모든 단계에 "이전으로" 버튼 추가 (첫 단계 제외)
+- [ ] 가입/신청 프로세스에 "취소" 링크 추가
+- [ ] 모달에 닫기 버튼 (X) 또는 바깥 영역 클릭 닫기 구현
+- [ ] 상세 페이지에 "목록으로" 또는 뒤로가기 버튼 추가
+- [ ] 폼 제출 실패 시 입력값 유지
+- [ ] 로딩 상태에서 버튼 비활성화
+
+### 에러 복구
+
+```tsx
+// ✅ 에러 발생 시 사용자가 복구할 수 있는 옵션 제공
+{error && (
+  <Alert severity="error">
+    {error}
+    <Button onClick={handleRetry}>다시 시도</Button>
+  </Alert>
+)}
+```
+
+---
+
 ## 일반 보안 규칙
 - 환경 변수 검증 필수
 - SQL Injection, XSS 방지
